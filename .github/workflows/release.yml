@@ -85,8 +85,11 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # Recursive on purpose: upload-artifact roots each artifact at the least
+      # common ancestor of its paths, so the jars arrive nested under
+      # dist/<loader>/build/libs/ rather than flat in dist/.
       - name: List what will be published
-        run: ls -la dist
+        run: find dist -name '*.jar' -print
 
       # Loader and Minecraft version are read from each jar's own metadata
       # (fabric.mod.json / neoforge.mods.toml), so every jar lands on the right
@@ -98,5 +101,5 @@ jobs:
           curseforge-id: ${{ vars.CURSEFORGE_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          files: dist/*.jar
+          files: dist/**/*.jar
           version-type: release
