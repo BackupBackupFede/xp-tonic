@@ -73,33 +73,79 @@ jobs:
             !neoforge/build/libs/*-javadoc.jar
           if-no-files-found: error
 
+  # ONE mc-publish call per Minecraft version, not one for everything.
+  #
+  # mc-publish creates a SINGLE version per call and reads its loaders and game
+  # versions from the PRIMARY file only; the rest ride along as extra files that
+  # contribute no metadata. Handing it all four jars therefore produced one
+  # Modrinth version labelled "Fabric / 1.21.1" that also carried the 26.2 and
+  # NeoForge jars - wrong, and confusing for anyone downloading.
+  #
+  # Publishing per matrix line gives each Minecraft version its own entry with
+  # both loaders on it, which is what a version means on these platforms.
   publish:
-    needs: build
+    needs: [ versions, build ]
+    strategy:
+      max-parallel: 1
+      matrix:
+        minecraft: ${{ fromJSON(needs.versions.outputs.list) }}
     runs-on: ubuntu-latest
+    name: publish ${{ matrix.minecraft }}
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
-          pattern: jars-*
-          merge-multiple: true
+          name: jars-${{ matrix.minecraft }}
           path: dist
 
-      # Recursive on purpose: upload-artifact roots each artifact at the least
-      # common ancestor of its paths, so the jars arrive nested under
-      # dist/<loader>/build/libs/ rather than flat in dist/.
-      - name: List what will be published
+      # Recursive: upload-artifact roots each artifact at the least common
+      # ancestor of its paths, so jars arrive under dist/<loader>/build/libs/,
+      # never flat in dist/.
+      - name: List what will be published for ${{ matrix.minecraft }}
         run: find dist -name '*.jar' -print
 
-      # Loader and Minecraft version are read from each jar's own metadata
-      # (fabric.mod.json / neoforge.mods.toml), so every jar lands on the right
-      # platform entry from a single call.
+      # Each Minecraft version gets its own entry, so each needs its own version
+      # number: publishing "1.0.0" twice on one project is a collision. The
+      # "1.0.0+1.21.1" shape is the usual convention for Minecraft mods.
+      - id: ver
+        name: Derive the version number for this line
+        run: echo "number=${GITHUB_REF_NAME#v}+${{ matrix.minecraft }}" >> "$GITHUB_OUTPUT"
+
+      # No github-token on purpose: the GitHub release is created once, by the
+      # job below, or each matrix leg would overwrite the previous one.
       - uses: Kir-Antipov/mc-publish@v3.3
         with:
           modrinth-id: ${{ vars.MODRINTH_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           curseforge-id: ${{ vars.CURSEFORGE_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           files: dist/**/*.jar
+          version: ${{ steps.ver.outputs.number }}
+          name: ${{ steps.ver.outputs.number }}
           version-type: release
+
+  # One release carrying every jar, via the runner's preinstalled gh CLI rather
+  # than another third-party action.
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jars-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          find dist -name '*.jar' -print | sort > jars.txt
+          if [ ! -s jars.txt ]; then
+            echo "::error::No jars found to attach to the release."
+            exit 1
+          fi
+          cat jars.txt
+          xargs -a jars.txt gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
