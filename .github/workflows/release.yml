@@ -1,0 +1,95 @@
+name: Release
+
+# Builds every line of MATRIX (read from build.gradle), then publishes ALL jars
+# in ONE pass to Modrinth + CurseForge + GitHub Releases.
+#
+# Why publishing is its own job: mc-publish must see every jar at once, otherwise
+# each matrix leg creates its own GitHub Release and overwrites the previous one.
+#
+# DORMANT until configured (a platform is skipped when its token is absent):
+#   Variables: MODRINTH_ID, CURSEFORGE_ID
+#   Secrets:   MODRINTH_TOKEN, CURSEFORGE_TOKEN
+#
+# Release flow: bump mod_version in gradle.properties, then
+#   git tag v0.1.0 && git push --tags
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        name: Read MATRIX keys from build.gradle
+        run: |
+          list=$(grep -oP '^\s*"\K[0-9][^"]*(?="\s*:\s*\[)' build.gradle | sed 's/.*/"&"/' | paste -sd, -)
+          if [ -z "$list" ]; then
+            echo "::error file=build.gradle::No versions found in MATRIX — check its formatting."
+            exit 1
+          fi
+          echo "list=[$list]" >> "$GITHUB_OUTPUT"
+          echo "Will release: [$list]"
+
+  build:
+    needs: versions
+    strategy:
+      fail-fast: true           # never publish a partial matrix
+      matrix:
+        minecraft: ${{ fromJSON(needs.versions.outputs.list) }}
+    runs-on: ubuntu-latest
+    name: build ${{ matrix.minecraft }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+      - run: chmod +x ./gradlew
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build -Pminecraft_version=${{ matrix.minecraft }} --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jars-${{ matrix.minecraft }}
+          path: |
+            fabric/build/libs/!(*-@(sources|javadoc)).jar
+            neoforge/build/libs/!(*-@(sources|javadoc)).jar
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jars-*
+          merge-multiple: true
+          path: dist
+
+      - name: List what will be published
+        run: ls -la dist
+
+      # Loader and Minecraft version are read from each jar's own metadata
+      # (fabric.mod.json / neoforge.mods.toml), so every jar lands on the right
+      # platform entry from a single call.
+      - uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          curseforge-id: ${{ vars.CURSEFORGE_ID }}
+          curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          files: dist/*.jar
+          version-type: release

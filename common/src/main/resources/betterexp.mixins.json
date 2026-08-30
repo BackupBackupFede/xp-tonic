@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.emeraude.betterexp.mixin",
+  "compatibilityLevel": "${mixin_compat}",
+  "mixins": [
+    "LivingEntityMixin",
+    "PlayerMixin",
+    "PotionContentsMixin"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

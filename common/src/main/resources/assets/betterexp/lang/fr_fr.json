@@ -1,0 +1,7 @@
+{
+  "effect.betterexp.xp_boost": "Gain d'XP",
+  "item.minecraft.potion.effect.xp_boost": "Potion de gain d'XP",
+  "item.minecraft.splash_potion.effect.xp_boost": "Potion jetable de gain d'XP",
+  "item.minecraft.lingering_potion.effect.xp_boost": "Potion persistante de gain d'XP",
+  "item.minecraft.tipped_arrow.effect.xp_boost": "Flèche de gain d'XP"
+}

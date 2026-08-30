@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "Hostile mobs rarely drop a Potion of XP Boost. Drinking it multiplies by five every point of experience you gain - mobs, ores, furnaces, fishing, breeding. Rarer bottles last longer or hit harder. When it runs out, you go looking for another.",
+  "authors": ["${mod_author}"],
+  "contact": {
+    "homepage": "https://github.com/BackupBackupFede/${mod_repo}",
+    "issues": "https://github.com/BackupBackupFede/${mod_repo}/issues"
+  },
+  "license": "${mod_license}",
+  "icon": "icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["net.emeraude.betterexp.fabric.BetterEXPFabric"],
+    "client": ["net.emeraude.betterexp.fabric.BetterEXPFabricClient"]
+  },
+  "mixins": ["${mod_id}.mixins.json", "${mod_id}.fabric.mixins.json"],
+  "depends": {
+    "minecraft": "${fabric_mc_dep}",
+    "fabricloader": ">=0.16",
+    "fabric-resource-loader-v0": "*"
+  }
+}
