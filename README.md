@@ -1,4 +1,4 @@
-# XP Tonic — NeoForge + Fabric, MC 1.21.1 + 26.2
+# XP Tonic — NeoForge + Fabric, MC 1.21.1 + 26.2 + 26.3
 
 Hostile mobs rarely drop a **Potion of XP Boost**. Drinking it multiplies by five every point of experience
 you gain — mobs, ores, furnaces, fishing, breeding. When it runs out, you go looking for another
@@ -65,7 +65,7 @@ $env:JAVA_HOME = 'C:\path\to\jdk-25'
 
 ```bash
 ./gradlew build                             # 26.2 (the default line)
-./gradlew build -Pminecraft_version=1.21.1  # the other line of MATRIX
+./gradlew build -Pminecraft_version=1.21.1  # any other line of MATRIX (1.21.1, 26.3)
 ```
 
 In PowerShell the property has to be quoted — `'-Pminecraft_version=1.21.1'` — or the shell mangles

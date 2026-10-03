@@ -4,9 +4,11 @@
   "package": "net.emeraude.betterexp.mixin",
   "compatibilityLevel": "${mixin_compat}",
   "mixins": [
+    "DedicatedServerMixin",
     "LivingEntityMixin",
     "PlayerMixin",
-    "PotionContentsMixin"
+    "PotionContentsMixin",
+    "SelfTestDropsMixin"
   ],
   "client": [],
   "injectors": {

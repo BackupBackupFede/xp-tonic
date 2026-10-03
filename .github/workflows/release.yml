@@ -12,6 +12,10 @@ name: Release
 #
 # Release flow: bump mod_version in gradle.properties, then
 #   git tag v0.1.0 && git push --tags
+#
+# Action majors were bumped away from the Node 20 deprecation. build.yml exercises checkout /
+# setup-java / setup-gradle on every push, so those are proven early; upload-artifact and
+# download-artifact only ever run here, so WATCH the first tag of a new mod.
 
 on:
   push:
@@ -27,7 +31,7 @@ jobs:
     outputs:
       list: ${{ steps.read.outputs.list }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: read
         name: Read MATRIX keys from build.gradle
         run: |
@@ -48,17 +52,17 @@ jobs:
     runs-on: ubuntu-latest
     name: build ${{ matrix.minecraft }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: |
             21
             25
       - run: chmod +x ./gradlew
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew build -Pminecraft_version=${{ matrix.minecraft }} --stacktrace
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: jars-${{ matrix.minecraft }}
           # upload-artifact globs with @actions/glob, NOT bash. Extglob such as
@@ -73,26 +77,31 @@ jobs:
             !neoforge/build/libs/*-javadoc.jar
           if-no-files-found: error
 
-  # ONE mc-publish call per Minecraft version, not one for everything.
+  # ONE mc-publish call per (Minecraft version x loader): one jar, one loader,
+  # one version.
   #
-  # mc-publish creates a SINGLE version per call and reads its loaders and game
-  # versions from the PRIMARY file only; the rest ride along as extra files that
-  # contribute no metadata. Handing it all four jars therefore produced one
-  # Modrinth version labelled "Fabric / 1.21.1" that also carried the 26.2 and
-  # NeoForge jars - wrong, and confusing for anyone downloading.
+  # Publishing both loaders' jars under a single version is what Modrinth
+  # rejects, and it rejects it late - at tag time, with
+  #   400 invalid_input: No fabric.mod.json present for Fabric file
+  # A Modrinth version has ONE primary file, and every loader the version
+  # declares has to be satisfied by that file. A Fabric jar and a NeoForge jar
+  # cannot share one. Sodium and JEI both publish one loader per version for
+  # exactly this reason; the multi-loader versions you see elsewhere are a
+  # single jar that two loaders can read (forge + neoforge), never two jars.
   #
-  # Publishing per matrix line gives each Minecraft version its own entry with
-  # both loaders on it, which is what a version means on these platforms.
+  # CurseForge is laxer and accepted the old shape, which is precisely how this
+  # stayed invisible until one platform had already been written to.
   publish:
     needs: [ versions, build ]
     strategy:
       max-parallel: 1
       matrix:
         minecraft: ${{ fromJSON(needs.versions.outputs.list) }}
+        loader: [ fabric, neoforge ]
     runs-on: ubuntu-latest
-    name: publish ${{ matrix.minecraft }}
+    name: publish ${{ matrix.minecraft }} ${{ matrix.loader }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: jars-${{ matrix.minecraft }}
           path: dist
@@ -100,16 +109,55 @@ jobs:
       # Recursive: upload-artifact roots each artifact at the least common
       # ancestor of its paths, so jars arrive under dist/<loader>/build/libs/,
       # never flat in dist/.
-      - name: List what will be published for ${{ matrix.minecraft }}
-        run: find dist -name '*.jar' -print
+      - name: List what will be published for ${{ matrix.minecraft }} ${{ matrix.loader }}
+        run: |
+          find dist/${{ matrix.loader }} -name '*.jar' -print > picked.txt
+          cat picked.txt
+          n=$(wc -l < picked.txt)
+          # Exactly one jar must match, or "primary file" stops meaning anything.
+          if [ "$n" -ne 1 ]; then
+            echo "::error::expected exactly 1 ${{ matrix.loader }} jar, found $n"
+            exit 1
+          fi
 
       # Each Minecraft version gets its own entry, so each needs its own version
       # number: publishing "1.0.0" twice on one project is a collision. The
       # "1.0.0+1.21.1" shape is the usual convention for Minecraft mods.
       - id: ver
         name: Derive the version number for this line
-        run: echo "number=${GITHUB_REF_NAME#v}+${{ matrix.minecraft }}" >> "$GITHUB_OUTPUT"
+        run: echo "number=${GITHUB_REF_NAME#v}+${{ matrix.minecraft }}-${{ matrix.loader }}" >> "$GITHUB_OUTPUT"
 
+      # A half-configured platform is the failure this guards against: mc-publish
+      # skips a platform whose token is missing and the job still goes green, so
+      # the release looks fine and one store is simply empty. Nothing configured
+      # at all stays dormant, as intended; an ID without its token is an error.
+      - name: Refuse to publish a half-configured platform
+        env:
+          MR_ID: ${{ vars.MODRINTH_ID }}
+          MR_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CF_ID: ${{ vars.CURSEFORGE_ID }}
+          CF_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          fail=0
+          for p in MR CF; do
+            eval "id=\$${p}_ID; token=\$${p}_TOKEN"
+            if [ -n "$id" ] && [ -z "$token" ]; then
+              echo "::error::${p}_ID is set but ${p}_TOKEN is not - this platform would be skipped in silence."
+              fail=1
+            elif [ -z "$id" ] && [ -n "$token" ]; then
+              echo "::error::${p}_TOKEN is set but ${p}_ID is not."
+              fail=1
+            elif [ -n "$id" ]; then
+              echo "$p: configured."
+            else
+              echo "::warning::$p is not configured - skipping that platform."
+            fi
+          done
+          exit $fail
+
+      # loaders and game-versions are declared, never inferred - one loader and
+      # one Minecraft version per call, matching the single jar handed over.
+      #
       # No github-token on purpose: the GitHub release is created once, by the
       # job below, or each matrix leg would overwrite the previous one.
       - uses: Kir-Antipov/mc-publish@v3.3
@@ -118,10 +166,12 @@ jobs:
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           curseforge-id: ${{ vars.CURSEFORGE_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
-          files: dist/**/*.jar
+          files: dist/${{ matrix.loader }}/build/libs/*.jar
           version: ${{ steps.ver.outputs.number }}
           name: ${{ steps.ver.outputs.number }}
           version-type: release
+          game-versions: ${{ matrix.minecraft }}
+          loaders: ${{ matrix.loader }}
 
   # One release carrying every jar, via the runner's preinstalled gh CLI rather
   # than another third-party action.
@@ -131,7 +181,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: jars-*
           merge-multiple: true
